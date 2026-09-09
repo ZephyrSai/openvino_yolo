@@ -54,7 +54,7 @@ chmod +x test_yolo_intel.sh
 ./test_yolo_intel.sh --skip-install # skip venv/package installs (reuse existing setup)
 ```
 
-Safe to re-run at any time. It never touches your system Python — everything lives in `~/yolo-intel-test/venv`. The harness scripts are called from wherever you cloned this repo, so keep the three files together.
+Safe to re-run at any time. It never touches your system Python — everything lives in `~/yolo-intel-test/venv`. The harness scripts are called from wherever you cloned this repo, so keep the four files together.
 
 ## Output
 
@@ -166,6 +166,7 @@ The script installs the XPU wheels from `https://download.pytorch.org/whl/xpu` a
 - `test_yolo_intel.sh` — the main diagnostic + benchmark script
 - `bench_harness.py` — Ultralytics end-to-end benchmark harness (cold-load, first-infer, steady-state, video FPS) for `cpu`, `xpu:0`, `intel:cpu`, `intel:gpu`, `intel:npu`
 - `ov_raw_bench.py` — raw OpenVINO Runtime harness (performance hints, async queue throughput, compile/cache timing)
+- `ov_export.py` — OpenVINO IR export helper (FP32/FP16/INT8, handles both the new `quantize=` and legacy `half`/`int8` Ultralytics export APIs)
 - `README.md` — this file
 
 ## Caveats
