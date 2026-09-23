@@ -98,6 +98,14 @@ for arg in "$@"; do
   esac
 done
 
+# Ultralytics "AutoUpdate" pip-installs anything its requirement check cannot
+# find. Accelerated ONNX Runtime builds ship under other distribution names
+# (onnxruntime-openvino, onnxruntime-qnn, onnxruntime-rocm), so that check fails
+# and AutoUpdate installs the plain CPU wheel straight over them - they all
+# unpack into the same onnxruntime/ directory and the last one installed wins.
+# Every later "accelerator" result is then a CPU result wearing the wrong label.
+export YOLO_AUTOINSTALL=False
+
 mkdir -p "$WORKDIR" "$LOGDIR" "$OV_CACHE"
 : > "$RESULTS_FILE"
 echo "backend,model,stage,metric,value_ms_or_fps" > "$BENCH_CSV"
@@ -110,6 +118,32 @@ pass() { echo -e "${GREEN}[PASS]${NC} $1"; echo "[PASS] $1" >> "$RESULTS_FILE"; 
 fail() { echo -e "${RED}[FAIL]${NC} $1"; echo "[FAIL] $1" >> "$RESULTS_FILE"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; echo "[WARN] $1" >> "$RESULTS_FILE"; }
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+
+# --- ONNX Runtime integrity -------------------------------------------------
+# Exactly one onnxruntime distribution may be installed: the CPU, and every
+# accelerated build, unpack into the same onnxruntime/ directory, so a second
+# one silently shadows the first. Call this after installs and again after any
+# Ultralytics export, which is where an unwanted one tends to appear.
+assert_ort_runtime() {
+  local stage="${1:-check}"
+  local dists
+  dists=$(pip list --format=freeze 2>/dev/null | grep -ciE '^onnxruntime(-[a-z]+)?==' || true)
+  if [ "${dists:-0}" -gt 1 ]; then
+    warn "ONNX Runtime integrity ($stage): $dists onnxruntime distributions installed at once - $(pip list --format=freeze 2>/dev/null | grep -iE '^onnxruntime(-[a-z]+)?==' | tr '\n' ' '). They share one directory, so one is shadowing the other. Keeping onnxruntime-openvino."
+    pip uninstall -y -q $(pip list --format=freeze 2>/dev/null | grep -ioE '^onnxruntime(-[a-z]+)?' | grep -iv "^onnxruntime-openvino$") >/dev/null 2>&1 || true
+    pip install -q --force-reinstall --no-deps onnxruntime-openvino >/dev/null 2>&1 || true
+  fi
+  if [ -n "OpenVINOExecutionProvider" ]; then
+    local eps
+    eps=$(python3 -c "import onnxruntime as ort; print(','.join(ort.get_available_providers()))" 2>/dev/null || echo "")
+    case "$eps" in
+      *OpenVINOExecutionProvider*) pass "ONNX Runtime integrity ($stage): OpenVINOExecutionProvider present" ;;
+      "") warn "ONNX Runtime integrity ($stage): onnxruntime not importable" ;;
+      *)  warn "ONNX Runtime integrity ($stage): OpenVINOExecutionProvider is gone (have: $eps). Something replaced the accelerated build - any 'accelerator' ONNX result from here on would really be CPU." ;;
+    esac
+  fi
+}
+
 
 # ==================================================================
 section "STEP 0: System / driver sanity checks"
@@ -289,6 +323,7 @@ if [ "$SKIP_INSTALL" -eq 0 ]; then
     warn "onnxruntime-openvino install failed (see $LOGDIR/ort_openvino_install.log) — installing plain onnxruntime; Step 7 will only have CPUExecutionProvider"
     pip install onnxruntime -q || true
   fi
+  assert_ort_runtime "after install"
 else
   # shellcheck disable=SC1091
   source "$VENV_DIR/bin/activate"
@@ -689,6 +724,7 @@ if ! python3 -c "import onnxruntime" >/dev/null 2>&1; then
 else
   python3 -c "import onnxruntime as ort; print(ort.__version__); print(ort.get_available_providers())" > "$LOGDIR/ort_providers.log" 2>&1
   cat "$LOGDIR/ort_providers.log"
+  assert_ort_runtime "before ORT stage"
   if grep -q "OpenVINOExecutionProvider" "$LOGDIR/ort_providers.log"; then
     pass "OpenVINOExecutionProvider is available to ONNX Runtime"
     ORT_OV=1
