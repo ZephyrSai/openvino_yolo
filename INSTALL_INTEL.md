@@ -22,13 +22,13 @@ the identical shape.
 
 | Layer | What you need | Check |
 |---|---|---|
-| Kernel | 6.8+ for Meteor Lake, **6.11+** for Arrow/Lunar Lake, 6.17+ for Panther Lake | `uname -r` |
+| Kernel | 6.8+ Meteor Lake, **6.11+** Arrow/Lunar Lake, 6.17+ Panther Lake. Driver v1.38.0 is validated on Ubuntu 24.04 and 26.04 | `uname -r` |
 | iGPU driver | `i915` (Meteor Lake) or `xe` (Lunar Lake and later) | `lsmod \| grep -E '^(i915\|xe)'` |
 | GPU compute | Intel compute runtime — OpenCL ICD + Level Zero | `clinfo -l`, `ls /dev/dri/renderD*` |
 | NPU kernel driver | `intel_vpu`, exposing `/dev/accel/accel0` | `lsmod \| grep intel_vpu` |
 | NPU user driver | `intel-driver-compiler-npu`, `intel-fw-npu`, `intel-level-zero-npu` | `ls /dev/accel/accel0` |
 | Permissions | your user in `render` (and `video`) | `id -nG` |
-| OpenVINO | 2026.4.0 (PyPI) or newer | `python -c "import openvino; print(openvino.__version__)"` |
+| OpenVINO | **match the NPU driver** - 2026.3.1 for driver v1.38.0 (§2.2) | `python -c "import openvino; print(openvino.__version__)"` |
 | ONNX Runtime | **`onnxruntime-openvino`** 1.24.1 — and nothing else | see §3 |
 
 Ground truth for "does the device work" is never `lsmod`; it is
@@ -90,10 +90,27 @@ python -c "import openvino; print(openvino.Core().available_devices)"
 # expect something like ['CPU', 'GPU', 'NPU']
 ```
 
-**Match the versions.** Intel validates the NPU driver against a specific
-Level Zero and OpenVINO pair (v1.26.0 was validated with Level Zero 1.24.2 and
-OpenVINO 2025.3). A driver much older or newer than your OpenVINO is the usual
-reason the NPU appears in `available_devices` and then fails to compile a model.
+**Match the versions — this is the most common NPU failure.** Intel validates
+each NPU driver release against one specific OpenVINO and Level Zero pair. For
+**v1.38.0** (10 Sep 2026) that is:
+
+| Component | Version |
+|---|---|
+| NPU driver | v1.38.0.20260910 |
+| OpenVINO | **2026.3.1** |
+| Level Zero | v1.32.0 |
+| NPU compiler | `npu_ud_2026_38_rc1` |
+| Validated OS | Ubuntu 24.04 LTS and 26.04 LTS |
+
+So pin OpenVINO to the driver, not to "latest":
+
+```bash
+pip install "openvino==2026.3.1"
+```
+
+A driver much older or newer than your OpenVINO is the usual reason the NPU
+appears in `available_devices` and then fails to compile a model. If you upgrade
+one, check the other release's notes and upgrade both.
 
 ### 2.3 Python environment
 
@@ -101,7 +118,7 @@ reason the NPU appears in `available_devices` and then fails to compile a model.
 sudo apt install -y python3-venv python3-pip
 python3 -m venv ~/yolo-intel-test/venv && source ~/yolo-intel-test/venv/bin/activate
 pip install -U pip
-pip install ultralytics openvino "onnx>=1.12,<2" onnxslim
+pip install ultralytics "openvino==2026.3.1" "onnx>=1.12,<2" onnxslim
 
 # PyTorch XPU (optional; only for the pytorch_xpu rows)
 pip install torch torchvision --index-url https://download.pytorch.org/whl/xpu
@@ -253,3 +270,21 @@ already happened to you.
 - `lib/fairness.py`, `lib/fair_compare.py` — measurement methodology
 - `test_yolo_intel.sh` — the suite
 - `bench_harness.py`, `ov_raw_bench.py`, `ov_export.py` — per-stage harnesses
+
+---
+
+## 9. Provenance of the version claims
+
+Everything in §1 and §2 is from vendor sources, fetched and checked on
+**23 Sep 2026**. It has **not** been executed on a Core Ultra machine.
+
+| Claim | Source |
+|---|---|
+| NPU driver v1.38.0, OpenVINO 2026.3.1, Level Zero 1.32.0, compiler `npu_ud_2026_38_rc1`, Ubuntu 24.04/26.04 | [intel/linux-npu-driver v1.38.0 release notes](https://github.com/intel/linux-npu-driver/releases/tag/v1.38.0) |
+| `libtbb12` required by `intel-driver-compiler-npu` | same release notes |
+| Compute runtime 26.35.39758.10 (17 Sep 2026) | [intel/compute-runtime releases](https://github.com/intel/compute-runtime/releases) |
+| `onnxruntime-openvino` 1.24.1 | [PyPI](https://pypi.org/project/onnxruntime-openvino/) |
+| The ONNX Runtime shadowing behaviour and the Ultralytics AutoUpdate mechanism (§3) | reproduced and fixed on AMD hardware in [ryzen_yolo](https://github.com/ZephyrSai/ryzen_yolo) |
+
+When you first run this on real hardware, §6 prints what your machine actually
+has; if it disagrees with this table, believe your machine and send a PR.
